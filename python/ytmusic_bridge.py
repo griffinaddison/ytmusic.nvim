@@ -4,6 +4,22 @@
 import json
 import sys
 import os
+import time
+
+# Simple response cache: {cache_key: (timestamp, result)}
+_cache = {}
+CACHE_TTL = 5  # seconds
+
+def cache_get(key):
+    if key in _cache:
+        ts, result = _cache[key]
+        if time.time() - ts < CACHE_TTL:
+            return result
+        del _cache[key]
+    return None
+
+def cache_set(key, result):
+    _cache[key] = (time.time(), result)
 
 def respond(req_id, data):
     msg = json.dumps({"id": req_id, "result": data})
@@ -42,6 +58,14 @@ def main():
         method = req.get("method", "")
         params = req.get("params", {})
 
+        # Check cache for read-only methods
+        cache_key = json.dumps({"method": method, "params": params}, sort_keys=True)
+        if method not in ("add_playlist_items", "remove_playlist_items", "ping"):
+            cached = cache_get(cache_key)
+            if cached is not None:
+                respond(req_id, cached)
+                continue
+
         try:
             if method == "search":
                 results = yt.search(params.get("query", ""), filter=params.get("filter", "songs"))
@@ -56,7 +80,29 @@ def main():
                             "album": (r.get("album") or {}).get("name", ""),
                             "duration": r.get("duration", ""),
                         })
+                cache_set(cache_key, tracks)
                 respond(req_id, tracks)
+
+            elif method == "get_home":
+                home = yt.get_home(limit=6)
+                sections = []
+                for section in home:
+                    title = section.get("title", "")
+                    items = []
+                    for item in section.get("contents", []):
+                        entry = {
+                            "title": item.get("title") or "",
+                            "playlistId": item.get("playlistId") or "",
+                            "videoId": item.get("videoId") or "",
+                            "description": item.get("description") or "",
+                        }
+                        artists = item.get("artists", [])
+                        if artists:
+                            entry["artist"] = ", ".join(a.get("name", "") for a in artists if "name" in a)
+                        items.append(entry)
+                    sections.append({"title": title, "items": items})
+                cache_set(cache_key, sections)
+                respond(req_id, sections)
 
             elif method == "get_library_playlists":
                 playlists = yt.get_library_playlists(limit=50)
@@ -67,6 +113,7 @@ def main():
                         "title": p.get("title", ""),
                         "count": p.get("count") or 0,
                     })
+                cache_set(cache_key, result)
                 respond(req_id, result)
 
             elif method == "get_liked_songs":
@@ -82,6 +129,7 @@ def main():
                         "duration": t.get("duration", ""),
                         "setVideoId": t.get("setVideoId", ""),
                     })
+                cache_set(cache_key, tracks)
                 respond(req_id, tracks)
 
             elif method == "get_playlist":
@@ -97,7 +145,9 @@ def main():
                         "duration": t.get("duration", ""),
                         "setVideoId": t.get("setVideoId", ""),
                     })
-                respond(req_id, {"title": playlist.get("title", ""), "tracks": tracks})
+                result = {"title": playlist.get("title", ""), "tracks": tracks}
+                cache_set(cache_key, result)
+                respond(req_id, result)
 
             elif method == "get_account_name":
                 try:

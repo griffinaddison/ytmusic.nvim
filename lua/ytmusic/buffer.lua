@@ -18,7 +18,7 @@ local function format_track(track)
   local parts = {}
   table.insert(parts, track.title or "Unknown")
   if track.artist and track.artist ~= "" then
-    table.insert(parts, "  " .. track.artist)
+    table.insert(parts, " - " .. track.artist)
   end
   return table.concat(parts)
 end
@@ -108,7 +108,6 @@ function M.open_library()
   buf_meta = {
     items = {
       [2] = { type = "queue" },
-      [3] = { type = "liked_songs" },
     },
   }
   nav_stack = {}
@@ -132,13 +131,11 @@ function M.open_library()
     make_header(),
     "",
     "queue",
-    "liked songs",
-    "  loading...",
     "",
     "playlists",
-    "  loading...",
   }
   render(buf, lines)
+  print("loading...")
 
   -- Fetch account name
   bridge.request("get_account_name", {}, function(name)
@@ -155,35 +152,54 @@ function M.open_library()
     end
   end)
 
-  -- Track responses so we can render once both are done
-  local liked_tracks = nil
-  local playlists_data = nil
+  -- Store home sections for re-render
+  local home_sections = {}
 
-  local function render_library()
-    if liked_tracks == nil or playlists_data == nil then return end
-
+  local function build_lines()
     local new_lines = {
       make_header(),
       "",
       "queue",
-      "liked songs",
     }
 
     buf_meta.items = {}
+    buf_tracks = {}
     buf_meta.items[2] = { type = "queue" }
-    buf_meta.items[3] = { type = "liked_songs" }
 
-    -- Add liked songs as indented items
-    for _, track in ipairs(liked_tracks) do
-      table.insert(new_lines, "  " .. format_track(track))
-      buf_tracks[#new_lines - 1] = track
+    -- Add home sections (listen again, mixed for you, etc.)
+    for _, section in ipairs(home_sections) do
+      local title = section.title:lower()
+      table.insert(new_lines, "")
+      table.insert(new_lines, title)
+      for _, item in ipairs(section.items) do
+        local display = "  " .. item.title
+        if item.artist and item.artist ~= "" then
+          display = display .. " - " .. item.artist
+        end
+        table.insert(new_lines, display)
+        local pid = item.playlistId
+        if pid and pid ~= "" and pid ~= vim.NIL then
+          buf_meta.items[#new_lines - 1] = {
+            type = "playlist",
+            playlistId = pid,
+            title = item.title,
+          }
+        end
+      end
     end
 
+    return new_lines
+  end
+
+  bridge.request("get_library_playlists", {}, function(playlists)
+    local new_lines = build_lines()
+
+    -- Add playlists section
     table.insert(new_lines, "")
     table.insert(new_lines, "playlists")
 
-    if #playlists_data > 0 then
-      for _, p in ipairs(playlists_data) do
+    if playlists and #playlists > 0 then
+      for _, p in ipairs(playlists) do
         table.insert(new_lines, "  " .. p.title)
         buf_meta.items[#new_lines - 1] = {
           type = "playlist",
@@ -196,22 +212,47 @@ function M.open_library()
     end
 
     render(buf, new_lines)
-
-    -- Start folded (defer to let foldexpr evaluate)
-    vim.defer_fn(function()
-      vim.wo[0].foldlevel = 0
-      vim.cmd("normal! gg")
-    end, 50)
-  end
-
-  bridge.request("get_liked_songs", { limit = 100 }, function(tracks)
-    liked_tracks = tracks or {}
-    render_library()
+    vim.wo[0].foldlevel = 0
+    vim.cmd("normal! gg")
+    print("")
   end)
 
-  bridge.request("get_library_playlists", {}, function(playlists)
-    playlists_data = playlists or {}
-    render_library()
+  bridge.request("get_home", {}, function(sections)
+    if sections then
+      local wanted = {}
+      for _, s in ipairs(sections) do
+        local t = s.title:lower()
+        if t:match("listen again") or t:match("mixed for you") then
+          table.insert(wanted, s)
+        end
+      end
+      home_sections = wanted
+    end
+    -- Re-trigger playlists render with home sections included
+    bridge.request("get_library_playlists", {}, function(playlists)
+      local new_lines = build_lines()
+
+      table.insert(new_lines, "")
+      table.insert(new_lines, "playlists")
+
+      if playlists and #playlists > 0 then
+        for _, p in ipairs(playlists) do
+          table.insert(new_lines, "  " .. p.title)
+          buf_meta.items[#new_lines - 1] = {
+            type = "playlist",
+            playlistId = p.playlistId,
+            title = p.title,
+          }
+        end
+      end
+
+      local cur = vim.api.nvim_get_current_buf()
+      if vim.bo[cur].filetype == "ytmusic" then
+        render(cur, new_lines)
+        vim.wo[0].foldlevel = 0
+        vim.cmd("normal! gg")
+      end
+    end)
   end)
 end
 
@@ -455,19 +496,17 @@ function M.action_enter()
   if buf_type == "library" then
     local item = buf_meta.items and buf_meta.items[line]
     if item then
-      if item.type == "liked_songs" then
-        M.open_liked_songs()
-      elseif item.type == "queue" then
+      if item.type == "queue" then
         M.open_queue()
       elseif item.type == "playlist" then
         M.toggle_playlist_expand(line, item)
       end
       return
     end
-    -- If on a fold header (like "playlists"), toggle the fold
+    -- If on a section header, toggle the fold
     local line_text = vim.api.nvim_buf_get_lines(0, line, line + 1, false)[1] or ""
-    if line_text:match("^playlists") then
-      vim.cmd("normal! za")
+    if line_text ~= "" and not line_text:match("^%s") and not line_text:match("^ytmusic") and not line_text:match("^queue") then
+      pcall(vim.cmd, "normal! za")
       return
     end
     -- Check if it's a track (liked songs inline)
@@ -659,27 +698,31 @@ function M.get_queue()
 end
 
 function M.foldtext()
-  local line = vim.fn.getline(vim.v.foldstart)
-  local count = vim.v.foldend - vim.v.foldstart
-  return line .. " (" .. count .. ")"
+  return vim.fn.getline(vim.v.foldstart)
 end
 
 function M.foldexpr(lnum)
   local line = vim.fn.getline(lnum)
-  if line:match("^liked songs") or line:match("^playlists") then
-    return ">1"
-  elseif line:match("^    ") then
+  -- 4-space indent: expanded playlist tracks
+  if line:match("^    ") then
     return "2"
-  elseif line:match("^  ") then
-    -- Check if next line is 4-space indented (expanded playlist)
+  end
+  -- 2-space indent: items under a section header
+  if line:match("^  ") then
     local next_line = vim.fn.getline(lnum + 1)
     if next_line and next_line:match("^    ") then
       return ">2"
     end
     return "1"
-  else
-    return "0"
   end
+  -- 0-indent non-empty line: check if it's a section header (has indented items below)
+  if line ~= "" and not line:match("^ytmusic") and not line:match("^queue") then
+    local next_line = vim.fn.getline(lnum + 1)
+    if next_line and next_line:match("^  ") then
+      return ">1"
+    end
+  end
+  return "0"
 end
 
 local help_win = nil
@@ -732,6 +775,7 @@ function M.toggle_help()
     style = "minimal",
     border = "rounded",
   })
+  vim.wo[help_win].foldenable = false
 end
 
 return M
