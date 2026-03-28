@@ -19,9 +19,6 @@ local function format_track(track)
   if track.artist and track.artist ~= "" then
     table.insert(parts, "  " .. track.artist)
   end
-  if track.duration and track.duration ~= "" then
-    table.insert(parts, "  [" .. track.duration .. "]")
-  end
   return table.concat(parts)
 end
 
@@ -77,6 +74,9 @@ local function set_keymaps(buf)
 
   -- a: add track to queue (without replacing)
   vim.keymap.set("n", "a", function() M.action_add_to_queue() end, opts)
+
+  -- g?: toggle help
+  vim.keymap.set("n", "g?", function() M.toggle_help() end, opts)
 
   -- :w override for syncing
   vim.api.nvim_create_autocmd("BufWriteCmd", {
@@ -196,7 +196,10 @@ function M.open_liked_songs()
   render(buf, { "  Loading Liked Songs..." })
 
   bridge.request("get_liked_songs", { limit = 100 }, function(tracks)
-    if not tracks then return end
+    if not tracks then
+      render(buf, { "  Liked Songs", "  ─────────────────────", "  (failed to load — try refreshing cookies)" })
+      return
+    end
     local lines = {
       "  Liked Songs",
       "  ─────────────────────",
@@ -454,6 +457,58 @@ end
 
 function M.get_queue()
   return queue
+end
+
+local help_win = nil
+function M.toggle_help()
+  if help_win and vim.api.nvim_win_is_valid(help_win) then
+    vim.api.nvim_win_close(help_win, true)
+    help_win = nil
+    return
+  end
+
+  local lines = {
+    " ytmusic.nvim",
+    "",
+    " Navigation",
+    "   Enter   open playlist / play track",
+    "   -       go back",
+    "   g?      toggle this help",
+    "",
+    " Tracks",
+    "   a       add to queue",
+    "   dd      remove from queue/playlist",
+    "   yy      yank track",
+    "   p       paste yanked track",
+    "   :w      sync changes to YouTube Music",
+    "",
+    " Playback",
+    "   <leader>mp   play/pause",
+    "   <leader>mn   next track",
+    "   <leader>mN   previous track",
+    "   <leader>mq   stop",
+    "",
+    " Commands",
+    "   :YTMusic     open library",
+    "   :YTSearch    search",
+  }
+
+  local width = 40
+  local height = #lines
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].bufhidden = "wipe"
+
+  help_win = vim.api.nvim_open_win(buf, false, {
+    relative = "editor",
+    width = width,
+    height = height,
+    col = vim.o.columns - width - 2,
+    row = 1,
+    style = "minimal",
+    border = "rounded",
+  })
 end
 
 return M

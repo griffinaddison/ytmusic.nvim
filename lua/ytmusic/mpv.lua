@@ -68,6 +68,7 @@ function M.play(video_id)
   end
   local url = "https://music.youtube.com/watch?v=" .. video_id
   send_command("loadfile", url, "replace")
+  send_command("set_property", "pause", false)
   M.start_polling()
 end
 

@@ -5,38 +5,33 @@ import json
 import sys
 import os
 
+def respond(req_id, data):
+    msg = json.dumps({"id": req_id, "result": data})
+    sys.stdout.write(msg + "\n")
+    sys.stdout.flush()
+
+def respond_error(req_id, error):
+    msg = json.dumps({"id": req_id, "error": str(error)})
+    sys.stdout.write(msg + "\n")
+    sys.stdout.flush()
+
 def main():
     from ytmusicapi import YTMusic
 
-    auth_type = os.environ.get("YTMUSIC_AUTH", "oauth")
-    auth_file = os.environ.get("YTMUSIC_AUTH_FILE", "")
+    config_dir = os.path.expanduser("~/.config/ytmusic.nvim")
+    browser_path = os.path.join(config_dir, "browser.json")
 
-    if auth_type == "browser" and auth_file:
-        yt = YTMusic(auth_file)
-    elif auth_type == "oauth" and auth_file:
-        yt = YTMusic(auth_file)
+    if os.path.exists(browser_path):
+        yt = YTMusic(browser_path)
     else:
-        # Try common locations
-        config_dir = os.path.expanduser("~/.config/ytmusic.nvim")
-        oauth_path = os.path.join(config_dir, "oauth.json")
-        browser_path = os.path.join(config_dir, "browser.json")
-        if os.path.exists(oauth_path):
-            yt = YTMusic(oauth_path)
-        elif os.path.exists(browser_path):
-            yt = YTMusic(browser_path)
-        else:
-            # Unauthenticated — search works, library doesn't
-            yt = YTMusic()
+        yt = YTMusic()
 
-    def respond(req_id, data):
-        msg = json.dumps({"id": req_id, "result": data})
-        sys.stdout.write(msg + "\n")
-        sys.stdout.flush()
-
-    def respond_error(req_id, error):
-        msg = json.dumps({"id": req_id, "error": str(error)})
-        sys.stdout.write(msg + "\n")
-        sys.stdout.flush()
+    # Check session on startup
+    try:
+        liked = yt.get_liked_songs(limit=1)
+        respond(0, "AUTH_OK")
+    except Exception:
+        respond_error(0, "Cookies expired. Run: ~/.local/share/ytmusic-nvim-venv/bin/python3 ~/dev/ytmusic.nvim/setup_auth.py")
 
     for line in sys.stdin:
         line = line.strip()

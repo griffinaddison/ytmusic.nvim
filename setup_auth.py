@@ -20,13 +20,14 @@ filepath = os.path.join(config_dir, "browser.json")
 cookie_file = os.path.join(config_dir, "cookie.txt")
 
 print("How to get your cookie:")
-print("  1. Open music.youtube.com in Chrome (make sure you're logged in)")
-print("  2. Open DevTools (Cmd+Option+I) > Network tab")
-print("  3. Check 'Disable cache'")
-print("  4. Hard refresh (Cmd+Shift+R)")
-print("  5. Click the first 'music.youtube.com' request")
-print("  6. Scroll to Request Headers > copy the Cookie value")
-print(f"  7. Paste it into: {cookie_file}")
+print("  1. Open an INCOGNITO window (Cmd+Shift+N) — this prevents cookie rotation")
+print("  2. Go to music.youtube.com and sign in")
+print("  3. Open DevTools (Cmd+Option+I) > Network tab")
+print("  4. Check 'Disable cache'")
+print("  5. Hard refresh (Cmd+Shift+R)")
+print("  6. Click the first 'music.youtube.com' request")
+print("  7. Scroll to Request Headers > copy the Cookie value")
+print(f"  8. Paste it into: {cookie_file}")
 print()
 print(f"Waiting for {cookie_file} ...")
 
@@ -77,18 +78,21 @@ headers = {
 with open(filepath, "w") as f:
     json.dump(headers, f, indent=2)
 
-# Test it and check for Premium
+# Test auth by checking liked songs (requires valid session)
 from ytmusicapi import YTMusic
 try:
     yt = YTMusic(filepath)
-
-    results = yt.search("test", filter="songs")
-    if results:
-        print(f"\nSuccess! Auth works. Found: {results[0]['title']}")
+    liked = yt.get_liked_songs(limit=1)
+    tracks = liked.get("tracks", [])
+    if tracks:
+        print(f"\nSuccess! Found liked song: {tracks[0]['title']}")
     else:
-        print("\nConnected but search returned no results.")
+        print("\nSuccess! Auth works (no liked songs found).")
     print(f"Auth saved to {filepath}")
     print("You can now use :YTMusic in Neovim!")
-except Exception as e:
-    print(f"\nAuth test failed: {e}")
+except Exception:
+    os.remove(filepath)
+    print("\nAuth failed — cookies are stale or not fully logged in.")
+    print("Make sure you grab cookies from an INCOGNITO window after signing in.")
+    sys.exit(1)
     print(f"File saved to {filepath} — you may need to re-copy cookies.")

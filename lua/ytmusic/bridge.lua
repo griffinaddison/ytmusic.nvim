@@ -28,18 +28,6 @@ function M.start()
     return
   end
 
-  local env_vars = {}
-  local config_dir = vim.fn.expand("~/.config/ytmusic.nvim")
-  env_vars.YTMUSIC_AUTH = "oauth"
-  local oauth_path = config_dir .. "/oauth.json"
-  local browser_path = config_dir .. "/browser.json"
-  if vim.fn.filereadable(oauth_path) == 1 then
-    env_vars.YTMUSIC_AUTH_FILE = oauth_path
-  elseif vim.fn.filereadable(browser_path) == 1 then
-    env_vars.YTMUSIC_AUTH = "browser"
-    env_vars.YTMUSIC_AUTH_FILE = browser_path
-  end
-
   job_id = vim.fn.jobstart({ python, script }, {
     stdout_buffered = false,
     on_stdout = function(_, data, _)
@@ -53,15 +41,24 @@ function M.start()
           if buffer ~= "" then
             local ok, msg = pcall(vim.json.decode, buffer)
             if ok and msg then
-              local cb = callbacks[msg.id]
-              if cb then
-                callbacks[msg.id] = nil
+              -- Startup auth check (id=0)
+              if msg.id == 0 then
                 if msg.error then
                   vim.schedule(function()
-                    vim.notify("ytmusic.nvim: " .. msg.error, vim.log.levels.ERROR)
+                    vim.notify("ytmusic.nvim: " .. tostring(msg.error), vim.log.levels.ERROR)
                   end)
-                else
-                  vim.schedule(function() cb(msg.result) end)
+                end
+              else
+                local cb = callbacks[msg.id]
+                if cb then
+                  callbacks[msg.id] = nil
+                  if msg.error then
+                    vim.schedule(function()
+                      cb(nil)
+                    end)
+                  else
+                    vim.schedule(function() cb(msg.result) end)
+                  end
                 end
               end
             end
@@ -85,7 +82,6 @@ function M.start()
     on_exit = function()
       job_id = nil
     end,
-    env = env_vars,
   })
 end
 
