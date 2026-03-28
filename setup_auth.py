@@ -82,12 +82,11 @@ from ytmusicapi import YTMusic
 try:
     yt = YTMusic(filepath)
 
-    liked = yt.get_liked_songs(limit=1)
-    tracks = liked.get("tracks", [])
-    if tracks:
-        print(f"\nSuccess! Found liked song: {tracks[0]['title']}")
+    results = yt.search("test", filter="songs")
+    if results:
+        print(f"\nSuccess! Auth works. Found: {results[0]['title']}")
     else:
-        print("\nConnected but no liked songs found.")
+        print("\nConnected but search returned no results.")
     print(f"Auth saved to {filepath}")
     print("You can now use :YTMusic in Neovim!")
 except Exception as e:

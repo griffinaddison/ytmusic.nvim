@@ -25,8 +25,11 @@ local function format_track(track)
   return table.concat(parts)
 end
 
+local buf_counter = 0
 local function set_buf_options(buf)
-  vim.bo[buf].buftype = "nofile"
+  buf_counter = buf_counter + 1
+  vim.api.nvim_buf_set_name(buf, "ytmusic://" .. buf_counter)
+  vim.bo[buf].buftype = "acwrite"
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].swapfile = false
   vim.bo[buf].filetype = "ytmusic"
@@ -337,7 +340,16 @@ function M.action_delete()
   if buf_type == "playlist" then
     buf_meta.pending_deletes = buf_meta.pending_deletes or {}
     table.insert(buf_meta.pending_deletes, track)
-    buf_tracks[line] = nil
+    -- Re-index: shift all tracks above the deleted line down by one
+    local new_tracks = {}
+    for idx, t in pairs(buf_tracks) do
+      if idx < line then
+        new_tracks[idx] = t
+      elseif idx > line then
+        new_tracks[idx - 1] = t
+      end
+    end
+    buf_tracks = new_tracks
     -- Remove line visually
     vim.bo[vim.api.nvim_get_current_buf()].modifiable = true
     vim.api.nvim_buf_set_lines(0, line, line + 1, false, {})
@@ -423,17 +435,20 @@ function M.action_sync()
         playlistId = buf_meta.playlistId,
         videoId = track.videoId,
       }, function(result)
-        vim.notify("Added: " .. (track.title or ""), vim.log.levels.INFO)
+        if result and type(result) == "table" and result.status == "STATUS_SUCCEEDED" then
+          vim.notify("Added: " .. (track.title or ""), vim.log.levels.INFO)
+        else
+          vim.notify("Failed to add: " .. (track.title or ""), vim.log.levels.ERROR)
+        end
       end)
       synced = true
     end
     buf_meta.pending_adds = nil
   end
 
+  vim.bo[vim.api.nvim_get_current_buf()].modified = false
   if synced then
-    vim.notify("Syncing changes to YouTube Music...", vim.log.levels.INFO)
-  else
-    vim.notify("No pending changes", vim.log.levels.INFO)
+    vim.notify("Syncing to YouTube Music...", vim.log.levels.INFO)
   end
 end
 
