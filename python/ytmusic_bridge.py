@@ -99,6 +99,22 @@ def main():
                     })
                 respond(req_id, {"title": playlist.get("title", ""), "tracks": tracks})
 
+            elif method == "get_account_name":
+                try:
+                    result = yt._send_request("account/account_menu", {})
+                    actions = result.get("actions", [])
+                    name = ""
+                    for a in actions:
+                        popup = a.get("openPopupAction", {}).get("popup", {}).get("multiPageMenuRenderer", {})
+                        header = popup.get("header", {}).get("activeAccountHeaderRenderer", {})
+                        if header:
+                            runs = header.get("channelHandle", {}).get("runs", [])
+                            if runs:
+                                name = runs[0].get("text", "")
+                    respond(req_id, name)
+                except Exception:
+                    respond(req_id, "")
+
             elif method == "add_playlist_items":
                 result = yt.add_playlist_items(
                     params["playlistId"],

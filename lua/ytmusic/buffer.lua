@@ -10,6 +10,7 @@ local buf_type = nil -- "library", "playlist", "search", "queue"
 local buf_meta = {} -- extra info (playlistId, etc.)
 local queue = {} -- current play queue
 local yank_register = {} -- yanked tracks
+local expanded_playlists = {} -- playlistId -> {tracks, line_start, line_count}
 
 local ns = vim.api.nvim_create_namespace("ytmusic")
 
@@ -31,6 +32,12 @@ local function set_buf_options(buf)
   vim.bo[buf].swapfile = false
   vim.bo[buf].filetype = "ytmusic"
   vim.bo[buf].modifiable = false
+  vim.wo[0].foldmethod = "expr"
+  vim.wo[0].foldexpr = "v:lua.require('ytmusic.buffer').foldexpr(v:lnum)"
+  vim.wo[0].foldtext = "v:lua.require('ytmusic.buffer').foldtext()"
+  vim.wo[0].foldlevel = 99
+  vim.wo[0].foldenable = true
+  vim.wo[0].fillchars = "fold: "
 end
 
 local function render(buf, lines, highlights)
@@ -97,6 +104,7 @@ function M.open_library()
 
   buf_type = "library"
   buf_tracks = {}
+  expanded_playlists = {}
   buf_meta = {
     items = {
       [2] = { type = "queue" },
@@ -105,34 +113,78 @@ function M.open_library()
   }
   nav_stack = {}
 
-  -- Start with static items, then load playlists
+  -- Start with static items, then load playlists and account name
+  local account_name = buf_meta.account_name or ""
+
+  local function make_header()
+    local left = "ytmusic.nvim"
+    if account_name ~= "" then
+      local width = vim.o.columns
+      local pad = width - #left - #account_name
+      if pad > 0 then
+        return left .. string.rep(" ", pad) .. account_name
+      end
+    end
+    return left
+  end
+
   local lines = {
-    "  ytmusic.nvim",
+    make_header(),
     "",
-    "  queue",
-    "  liked songs",
-    "  playlists",
-    "    loading...",
+    "queue",
+    "liked songs",
+    "  loading...",
+    "",
+    "playlists",
+    "  loading...",
   }
   render(buf, lines)
 
-  bridge.request("get_library_playlists", {}, function(playlists)
+  -- Fetch account name
+  bridge.request("get_account_name", {}, function(name)
+    if name and name ~= "" then
+      account_name = name
+      buf_meta.account_name = name
+      local buf2 = vim.api.nvim_get_current_buf()
+      if vim.bo[buf2].filetype == "ytmusic" then
+        vim.bo[buf2].modifiable = true
+        vim.api.nvim_buf_set_lines(buf2, 0, 1, false, { make_header() })
+        vim.bo[buf2].modifiable = false
+        vim.bo[buf2].modified = false
+      end
+    end
+  end)
+
+  -- Track responses so we can render once both are done
+  local liked_tracks = nil
+  local playlists_data = nil
+
+  local function render_library()
+    if liked_tracks == nil or playlists_data == nil then return end
+
     local new_lines = {
-      "  ytmusic.nvim",
+      make_header(),
       "",
-      "  queue",
-      "  liked songs",
-      "  playlists",
+      "queue",
+      "liked songs",
     }
 
     buf_meta.items = {}
     buf_meta.items[2] = { type = "queue" }
     buf_meta.items[3] = { type = "liked_songs" }
 
-    if playlists and #playlists > 0 then
-      for _, p in ipairs(playlists) do
-        local line = "    " .. p.title
-        table.insert(new_lines, line)
+    -- Add liked songs as indented items
+    for _, track in ipairs(liked_tracks) do
+      table.insert(new_lines, "  " .. format_track(track))
+      buf_tracks[#new_lines - 1] = track
+    end
+
+    table.insert(new_lines, "")
+    table.insert(new_lines, "playlists")
+
+    if #playlists_data > 0 then
+      for _, p in ipairs(playlists_data) do
+        table.insert(new_lines, "  " .. p.title)
         buf_meta.items[#new_lines - 1] = {
           type = "playlist",
           playlistId = p.playlistId,
@@ -140,10 +192,26 @@ function M.open_library()
         }
       end
     else
-      table.insert(new_lines, "    (no playlists found)")
+      table.insert(new_lines, "  (no playlists found)")
     end
 
     render(buf, new_lines)
+
+    -- Start folded (defer to let foldexpr evaluate)
+    vim.defer_fn(function()
+      vim.wo[0].foldlevel = 0
+      vim.cmd("normal! gg")
+    end, 50)
+  end
+
+  bridge.request("get_liked_songs", { limit = 100 }, function(tracks)
+    liked_tracks = tracks or {}
+    render_library()
+  end)
+
+  bridge.request("get_library_playlists", {}, function(playlists)
+    playlists_data = playlists or {}
+    render_library()
   end)
 end
 
@@ -267,19 +335,156 @@ end
 
 -- Actions
 
+function M.toggle_playlist_expand(line, item)
+  local pid = item.playlistId
+  local buf = vim.api.nvim_get_current_buf()
+
+  if expanded_playlists[pid] then
+    -- Collapse: remove the inserted track lines
+    local info = expanded_playlists[pid]
+    local start = info.line_start
+    local count = info.line_count
+
+    vim.bo[buf].modifiable = true
+    vim.api.nvim_buf_set_lines(buf, start, start + count, false, {})
+    vim.bo[buf].modifiable = false
+    vim.bo[buf].modified = false
+
+    -- Remove tracks from buf_tracks and shift items/tracks down
+    local new_tracks = {}
+    local new_items = {}
+    for idx, t in pairs(buf_tracks) do
+      if idx < start then
+        new_tracks[idx] = t
+      elseif idx >= start + count then
+        new_tracks[idx - count] = t
+      end
+    end
+    for idx, it in pairs(buf_meta.items) do
+      if idx < start then
+        new_items[idx] = it
+      elseif idx >= start + count then
+        new_items[idx - count] = it
+      end
+    end
+    buf_tracks = new_tracks
+    buf_meta.items = new_items
+
+    -- Update other expanded playlists' positions
+    for other_pid, other_info in pairs(expanded_playlists) do
+      if other_pid ~= pid and other_info.line_start > start then
+        other_info.line_start = other_info.line_start - count
+      end
+    end
+
+    expanded_playlists[pid] = nil
+    return
+  end
+
+  -- Expand: fetch tracks and insert below
+  print("loading...")
+  bridge.request("get_playlist", { playlistId = pid }, function(result)
+    if not result then
+      print("failed to load playlist")
+      return
+    end
+
+    local tracks = result.tracks or {}
+    local insert_at = line + 1 -- insert after the playlist name line
+    local track_lines = {}
+    for _, track in ipairs(tracks) do
+      table.insert(track_lines, "    " .. format_track(track))
+    end
+
+    if #track_lines == 0 then
+      track_lines = { "    (empty)" }
+    end
+
+    vim.bo[buf].modifiable = true
+    vim.api.nvim_buf_set_lines(buf, insert_at, insert_at, false, track_lines)
+    vim.bo[buf].modifiable = false
+    vim.bo[buf].modified = false
+
+    -- Shift existing tracks and items that are below the insertion point
+    local new_tracks = {}
+    local new_items = {}
+    local count = #track_lines
+    for idx, t in pairs(buf_tracks) do
+      if idx < insert_at then
+        new_tracks[idx] = t
+      else
+        new_tracks[idx + count] = t
+      end
+    end
+    for idx, it in pairs(buf_meta.items) do
+      if idx < insert_at then
+        new_items[idx] = it
+      else
+        new_items[idx + count] = it
+      end
+    end
+
+    -- Add the new tracks
+    for i, track in ipairs(tracks) do
+      new_tracks[insert_at + i - 1] = track
+    end
+
+    buf_tracks = new_tracks
+    buf_meta.items = new_items
+
+    -- Update other expanded playlists' positions
+    for other_pid, other_info in pairs(expanded_playlists) do
+      if other_info.line_start >= insert_at then
+        other_info.line_start = other_info.line_start + count
+      end
+    end
+
+    expanded_playlists[pid] = {
+      tracks = tracks,
+      line_start = insert_at,
+      line_count = count,
+    }
+
+    print(item.title .. " (" .. #tracks .. ")")
+  end)
+end
+
 function M.action_enter()
   local line = vim.api.nvim_win_get_cursor(0)[1] - 1 -- 0-indexed
 
   if buf_type == "library" then
     local item = buf_meta.items and buf_meta.items[line]
-    if not item then return end
-    if item.type == "liked_songs" then
-      M.open_liked_songs()
-    elseif item.type == "queue" then
-      M.open_queue()
-    elseif item.type == "playlist" then
-      M.open_playlist(item.playlistId, item.title)
+    if item then
+      if item.type == "liked_songs" then
+        M.open_liked_songs()
+      elseif item.type == "queue" then
+        M.open_queue()
+      elseif item.type == "playlist" then
+        M.toggle_playlist_expand(line, item)
+      end
+      return
     end
+    -- If on a fold header (like "playlists"), toggle the fold
+    local line_text = vim.api.nvim_buf_get_lines(0, line, line + 1, false)[1] or ""
+    if line_text:match("^playlists") then
+      vim.cmd("normal! za")
+      return
+    end
+    -- Check if it's a track (liked songs inline)
+    local track = buf_tracks[line]
+    if track and track.videoId and track.videoId ~= "" then
+      mpv.play(track.videoId, track)
+      print("▶ " .. (track.title or ""))
+      queue = {}
+      table.insert(queue, track)
+      for i = line + 1, vim.api.nvim_buf_line_count(0) - 1 do
+        if buf_tracks[i] then
+          table.insert(queue, buf_tracks[i])
+          mpv.queue_track(buf_tracks[i].videoId)
+        end
+      end
+    end
+    return
   else
     -- Play track
     local track = buf_tracks[line]
@@ -451,6 +656,30 @@ end
 
 function M.get_queue()
   return queue
+end
+
+function M.foldtext()
+  local line = vim.fn.getline(vim.v.foldstart)
+  local count = vim.v.foldend - vim.v.foldstart
+  return line .. " (" .. count .. ")"
+end
+
+function M.foldexpr(lnum)
+  local line = vim.fn.getline(lnum)
+  if line:match("^liked songs") or line:match("^playlists") then
+    return ">1"
+  elseif line:match("^    ") then
+    return "2"
+  elseif line:match("^  ") then
+    -- Check if next line is 4-space indented (expanded playlist)
+    local next_line = vim.fn.getline(lnum + 1)
+    if next_line and next_line:match("^    ") then
+      return ">2"
+    end
+    return "1"
+  else
+    return "0"
+  end
 end
 
 local help_win = nil
