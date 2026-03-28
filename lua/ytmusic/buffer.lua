@@ -99,8 +99,8 @@ function M.open_library()
   buf_tracks = {}
   buf_meta = {
     items = {
-      [2] = { type = "liked_songs" },
-      [3] = { type = "queue" },
+      [2] = { type = "queue" },
+      [3] = { type = "liked_songs" },
     },
   }
   nav_stack = {}
@@ -109,11 +109,10 @@ function M.open_library()
   local lines = {
     "  ytmusic.nvim",
     "",
-    "  Liked Songs",
-    "  Queue",
-    "",
-    "  Playlists",
-    "    Loading...",
+    "  queue",
+    "  liked songs",
+    "  playlists",
+    "    loading...",
   }
   render(buf, lines)
 
@@ -121,16 +120,14 @@ function M.open_library()
     local new_lines = {
       "  ytmusic.nvim",
       "",
-      "  Liked Songs",
-      "  Queue",
-      "",
-      "  Playlists",
+      "  queue",
+      "  liked songs",
+      "  playlists",
     }
 
     buf_meta.items = {}
-    -- Line indices (0-indexed): 2=Liked, 3=Queue
-    buf_meta.items[2] = { type = "liked_songs" }
-    buf_meta.items[3] = { type = "queue" }
+    buf_meta.items[2] = { type = "queue" }
+    buf_meta.items[3] = { type = "liked_songs" }
 
     if playlists and #playlists > 0 then
       for _, p in ipairs(playlists) do
@@ -192,16 +189,15 @@ function M.open_liked_songs()
   buf_tracks = {}
   buf_meta = {}
 
-  render(buf, { "  Loading Liked Songs..." })
+  render(buf, { "  loading liked songs..." })
 
   bridge.request("get_liked_songs", { limit = 100 }, function(tracks)
     if not tracks then
-      render(buf, { "  Liked Songs", "  ─────────────────────", "  (failed to load — try refreshing cookies)" })
+      render(buf, { "  liked songs", "  (failed to load — try refreshing cookies)" })
       return
     end
     local lines = {
-      "  Liked Songs",
-      "  ─────────────────────",
+      "  liked songs",
     }
     buf_tracks = {}
     for _, track in ipairs(tracks) do
@@ -224,8 +220,7 @@ function M.open_queue()
   buf_meta = {}
 
   local lines = {
-    "  Queue",
-    "  ─────────────────────",
+    "  queue",
   }
   for _, track in ipairs(queue) do
     table.insert(lines, "  " .. format_track(track))
