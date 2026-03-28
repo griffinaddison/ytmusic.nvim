@@ -5,6 +5,7 @@ local mpv_pid = nil
 local queue = {}
 local current_index = 0
 local poll_timer = nil
+local current_track = nil -- {title, artist, videoId}
 
 local function send_command(...)
   local args = { ... }
@@ -61,11 +62,12 @@ local function ensure_mpv()
   return vim.fn.system("test -S " .. socket_path .. " && echo yes || echo no"):match("yes") ~= nil
 end
 
-function M.play(video_id)
+function M.play(video_id, track_info)
   if not ensure_mpv() then
     vim.notify("ytmusic.nvim: Failed to start mpv", vim.log.levels.ERROR)
     return
   end
+  current_track = track_info
   local url = "https://music.youtube.com/watch?v=" .. video_id
   send_command("loadfile", url, "replace")
   send_command("set_property", "pause", false)
@@ -108,8 +110,11 @@ function M.get_now_playing(callback)
     send_command_async({ "get_property", "time-pos" }, function(pos_result)
       send_command_async({ "get_property", "duration" }, function(dur_result)
         send_command_async({ "get_property", "pause" }, function(pause_result)
+          local title = current_track and current_track.title or (title_result and title_result.data or "")
+          local artist = current_track and current_track.artist or ""
           callback({
-            title = title_result and title_result.data or "",
+            title = title,
+            artist = artist,
             position = pos_result and pos_result.data or 0,
             duration = dur_result and dur_result.data or 0,
             paused = pause_result and pause_result.data or false,
@@ -123,9 +128,10 @@ end
 function M.start_polling()
   M.stop_polling()
   poll_timer = vim.uv.new_timer()
-  poll_timer:start(1000, 2000, vim.schedule_wrap(function()
+  poll_timer:start(1000, 1000, vim.schedule_wrap(function()
     M.get_now_playing(function(info)
       vim.g.ytmusic_now_playing = info
+      vim.cmd("redrawstatus")
     end)
   end))
 end
@@ -135,6 +141,13 @@ function M.stop_polling()
     poll_timer:stop()
     poll_timer:close()
     poll_timer = nil
+  end
+end
+
+function M.reconnect()
+  local check = vim.fn.system("test -S " .. socket_path .. " && echo yes || echo no")
+  if check:match("yes") then
+    M.start_polling()
   end
 end
 

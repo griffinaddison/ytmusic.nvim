@@ -15,12 +15,16 @@ function M.now_playing()
   end
 
   local icon = info.paused and "⏸ " or "▶ "
+  local track = info.title
+  if info.artist and info.artist ~= "" then
+    track = info.artist .. " - " .. info.title
+  end
   local time = ""
   if info.duration and info.duration > 0 then
     time = " " .. format_time(info.position) .. "/" .. format_time(info.duration)
   end
 
-  return icon .. info.title .. time
+  return icon .. track .. time
 end
 
 return M

@@ -24,6 +24,9 @@ function M.setup(opts)
 
   -- Start the bridge
   require("ytmusic.bridge").start()
+
+  -- Reconnect to existing mpv session if running
+  require("ytmusic.mpv").reconnect()
 end
 
 function M.open()

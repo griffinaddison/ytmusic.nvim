@@ -26,12 +26,8 @@ def main():
     else:
         yt = YTMusic()
 
-    # Check session on startup
-    try:
-        liked = yt.get_liked_songs(limit=1)
-        respond(0, "AUTH_OK")
-    except Exception:
-        respond_error(0, "Cookies expired. Run: ~/.local/share/ytmusic-nvim-venv/bin/python3 ~/dev/ytmusic.nvim/setup_auth.py")
+    # Signal ready immediately, check auth lazily on first library request
+    respond(0, "AUTH_OK")
 
     for line in sys.stdin:
         line = line.strip()

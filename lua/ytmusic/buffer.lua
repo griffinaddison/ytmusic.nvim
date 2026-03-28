@@ -34,9 +34,11 @@ local function set_buf_options(buf)
 end
 
 local function render(buf, lines, highlights)
+  vim.bo[buf].modified = false
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
+  vim.bo[buf].modified = false
   if highlights then
     for _, hl in ipairs(highlights) do
       vim.api.nvim_buf_add_highlight(buf, ns, hl.group, hl.line, hl.col_start, hl.col_end)
@@ -105,27 +107,24 @@ function M.open_library()
 
   -- Start with static items, then load playlists
   local lines = {
-    "  YouTube Music",
+    "  ytmusic.nvim",
     "",
     "  Liked Songs",
     "  Queue",
     "",
     "  Playlists",
-    "  ─────────────────────",
-    "",
-    "  Loading playlists...",
+    "    Loading...",
   }
   render(buf, lines)
 
   bridge.request("get_library_playlists", {}, function(playlists)
     local new_lines = {
-      "  YouTube Music",
+      "  ytmusic.nvim",
       "",
       "  Liked Songs",
       "  Queue",
       "",
       "  Playlists",
-      "  ─────────────────────",
     }
 
     buf_meta.items = {}
@@ -135,7 +134,7 @@ function M.open_library()
 
     if playlists and #playlists > 0 then
       for _, p in ipairs(playlists) do
-        local line = string.format("  %s  (%d)", p.title, p.count)
+        local line = "    " .. p.title
         table.insert(new_lines, line)
         buf_meta.items[#new_lines - 1] = {
           type = "playlist",
@@ -144,7 +143,7 @@ function M.open_library()
         }
       end
     else
-      table.insert(new_lines, "  (no playlists found)")
+      table.insert(new_lines, "    (no playlists found)")
     end
 
     render(buf, new_lines)
@@ -290,7 +289,8 @@ function M.action_enter()
     -- Play track
     local track = buf_tracks[line]
     if track and track.videoId and track.videoId ~= "" then
-      mpv.play(track.videoId)
+      mpv.play(track.videoId, track)
+      print("▶ " .. (track.title or ""))
       -- Set this track as current and queue remaining tracks
       queue = {}
       table.insert(queue, track)
@@ -301,7 +301,6 @@ function M.action_enter()
           mpv.queue_track(buf_tracks[i].videoId)
         end
       end
-      vim.notify("Playing: " .. (track.title or ""), vim.log.levels.INFO)
     end
   end
 end
@@ -357,7 +356,7 @@ function M.action_delete()
     vim.bo[vim.api.nvim_get_current_buf()].modifiable = true
     vim.api.nvim_buf_set_lines(0, line, line + 1, false, {})
     vim.bo[vim.api.nvim_get_current_buf()].modifiable = false
-    vim.notify("Marked for removal (save with :w)", vim.log.levels.INFO)
+    print("removed (save with :w)")
   end
 end
 
@@ -366,13 +365,13 @@ function M.action_yank()
   local track = buf_tracks[line]
   if track then
     yank_register = { track }
-    vim.notify("Yanked: " .. (track.title or ""), vim.log.levels.INFO)
+    print("yanked: " .. (track.title or ""))
   end
 end
 
 function M.action_paste()
   if #yank_register == 0 then
-    vim.notify("Nothing yanked", vim.log.levels.WARN)
+    print("nothing yanked")
     return
   end
 
@@ -383,7 +382,7 @@ function M.action_paste()
     mpv.queue_track(track.videoId)
     M.open_queue()
     nav_stack[#nav_stack] = nil
-    vim.notify("Added to queue: " .. (track.title or ""), vim.log.levels.INFO)
+    print("queued: " .. (track.title or ""))
   elseif buf_type == "playlist" and buf_meta.playlistId then
     buf_meta.pending_adds = buf_meta.pending_adds or {}
     table.insert(buf_meta.pending_adds, track)
@@ -392,7 +391,7 @@ function M.action_paste()
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "  " .. format_track(track) .. "  [+new]" })
     vim.bo[buf].modifiable = false
-    vim.notify("Marked for adding (save with :w)", vim.log.levels.INFO)
+    print("added (save with :w)")
   end
 end
 
@@ -402,13 +401,13 @@ function M.action_add_to_queue()
   if track and track.videoId then
     table.insert(queue, track)
     mpv.queue_track(track.videoId)
-    vim.notify("Queued: " .. (track.title or ""), vim.log.levels.INFO)
+    print("queued: " .. (track.title or ""))
   end
 end
 
 function M.action_sync()
   if buf_type ~= "playlist" or not buf_meta.playlistId then
-    vim.notify("Nothing to sync", vim.log.levels.INFO)
+    print("no pending changes")
     return
   end
 
@@ -423,7 +422,7 @@ function M.action_sync()
           videoId = track.videoId,
           setVideoId = track.setVideoId,
         }, function(result)
-          vim.notify("Removed: " .. (track.title or ""), vim.log.levels.INFO)
+          print("removed: " .. (track.title or ""))
         end)
         synced = true
       end
@@ -439,9 +438,9 @@ function M.action_sync()
         videoId = track.videoId,
       }, function(result)
         if result and type(result) == "table" and result.status == "STATUS_SUCCEEDED" then
-          vim.notify("Added: " .. (track.title or ""), vim.log.levels.INFO)
+          print("added: " .. (track.title or ""))
         else
-          vim.notify("Failed to add: " .. (track.title or ""), vim.log.levels.ERROR)
+          print("failed to add: " .. (track.title or ""))
         end
       end)
       synced = true
@@ -451,7 +450,7 @@ function M.action_sync()
 
   vim.bo[vim.api.nvim_get_current_buf()].modified = false
   if synced then
-    vim.notify("Syncing to YouTube Music...", vim.log.levels.INFO)
+    print("syncing...")
   end
 end
 
