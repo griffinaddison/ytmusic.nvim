@@ -84,6 +84,9 @@ local function set_keymaps(buf)
   -- a: add track to queue (without replacing)
   vim.keymap.set("n", "a", function() M.action_add_to_queue() end, opts)
 
+  -- gd: go to artist
+  vim.keymap.set("n", "gd", function() M.action_go_to_artist() end, opts)
+
   -- g?: toggle help
   vim.keymap.set("n", "g?", function() M.toggle_help() end, opts)
 
@@ -524,6 +527,37 @@ function M.action_enter()
       end
     end
     return
+  elseif buf_type == "artist" then
+    local item = buf_meta.items and buf_meta.items[line]
+    if item then
+      if item.type == "playlist" then
+        M.toggle_playlist_expand(line, item)
+      elseif item.type == "related_artist" then
+        M.open_artist(item.channelId, item.name)
+      end
+      return
+    end
+    -- Section header: toggle fold
+    local line_text = vim.api.nvim_buf_get_lines(0, line, line + 1, false)[1] or ""
+    if line_text ~= "" and not line_text:match("^%s") and not line_text:match("^queue") then
+      pcall(vim.cmd, "normal! za")
+      return
+    end
+    -- Track: play it
+    local track = buf_tracks[line]
+    if track and track.videoId and track.videoId ~= "" then
+      mpv.play(track.videoId, track)
+      print("▶ " .. (track.title or ""))
+      queue = {}
+      table.insert(queue, track)
+      for i = line + 1, vim.api.nvim_buf_line_count(0) - 1 do
+        if buf_tracks[i] then
+          table.insert(queue, buf_tracks[i])
+          mpv.queue_track(buf_tracks[i].videoId)
+        end
+      end
+    end
+    return
   else
     -- Play track
     local track = buf_tracks[line]
@@ -644,6 +678,130 @@ function M.action_add_to_queue()
   end
 end
 
+function M.action_go_to_artist()
+  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local track = buf_tracks[line]
+  if track and track.artistId and track.artistId ~= "" then
+    M.open_artist(track.artistId, track.artist)
+    return
+  end
+  -- Check if on a related artist line
+  local item = buf_meta.items and buf_meta.items[line]
+  if item and item.type == "related_artist" and item.channelId then
+    M.open_artist(item.channelId, item.name)
+    return
+  end
+  print("no artist on this line")
+end
+
+function M.open_artist(channel_id, name)
+  local buf = get_or_create_buf()
+  set_buf_options(buf)
+  set_keymaps(buf)
+
+  table.insert(nav_stack, { type = buf_type, meta = vim.deepcopy(buf_meta) })
+  buf_type = "artist"
+  buf_tracks = {}
+  buf_meta = { channelId = channel_id, name = name }
+
+  render(buf, { "loading " .. (name or "artist") .. "..." })
+  print("loading " .. (name or "artist") .. "...")
+
+  bridge.request("get_artist", { channelId = channel_id }, function(data)
+    if not data then
+      render(buf, { name or "artist", "  (failed to load)" })
+      return
+    end
+
+    local new_lines = {}
+    -- Header
+    table.insert(new_lines, data.name or name or "")
+    if data.subscribers and data.subscribers ~= "" then
+      table.insert(new_lines, data.subscribers)
+    end
+    table.insert(new_lines, "")
+
+    buf_meta.items = {}
+
+    -- Top songs
+    if data.topSongs and #data.topSongs > 0 then
+      table.insert(new_lines, "top songs")
+      for _, s in ipairs(data.topSongs) do
+        local display = "  " .. s.title
+        if s.artist and s.artist ~= "" then
+          display = display .. " - " .. s.artist
+        end
+        table.insert(new_lines, display)
+        buf_tracks[#new_lines - 1] = s
+      end
+      table.insert(new_lines, "")
+    end
+
+    -- Albums
+    if data.albums and #data.albums > 0 then
+      table.insert(new_lines, "albums")
+      for _, a in ipairs(data.albums) do
+        local display = "  " .. a.title
+        if a.year and a.year ~= "" then
+          display = display .. " (" .. a.year .. ")"
+        end
+        table.insert(new_lines, display)
+        if a.playlistId and a.playlistId ~= "" then
+          buf_meta.items[#new_lines - 1] = {
+            type = "playlist",
+            playlistId = a.playlistId,
+            title = a.title,
+          }
+        end
+      end
+      table.insert(new_lines, "")
+    end
+
+    -- Singles
+    if data.singles and #data.singles > 0 then
+      table.insert(new_lines, "singles")
+      for _, s in ipairs(data.singles) do
+        local display = "  " .. s.title
+        if s.year and s.year ~= "" then
+          display = display .. " (" .. s.year .. ")"
+        end
+        table.insert(new_lines, display)
+        if s.playlistId and s.playlistId ~= "" then
+          buf_meta.items[#new_lines - 1] = {
+            type = "playlist",
+            playlistId = s.playlistId,
+            title = s.title,
+          }
+        end
+      end
+      table.insert(new_lines, "")
+    end
+
+    -- Related artists
+    if data.related and #data.related > 0 then
+      table.insert(new_lines, "related artists")
+      for _, r in ipairs(data.related) do
+        local display = "  " .. r.name
+        if r.subscribers and r.subscribers ~= "" then
+          display = display .. " (" .. r.subscribers .. ")"
+        end
+        table.insert(new_lines, display)
+        if r.channelId and r.channelId ~= "" then
+          buf_meta.items[#new_lines - 1] = {
+            type = "related_artist",
+            channelId = r.channelId,
+            name = r.name,
+          }
+        end
+      end
+    end
+
+    render(buf, new_lines)
+    vim.wo[0].foldlevel = 99
+    print("")
+  end)
+end
+
 function M.action_sync()
   if buf_type ~= "playlist" or not buf_meta.playlistId then
     print("no pending changes")
@@ -739,6 +897,7 @@ function M.toggle_help()
     " Navigation",
     "   Enter   open playlist / play track",
     "   -       go back",
+    "   gd      go to artist",
     "   g?      toggle this help",
     "",
     " Tracks",

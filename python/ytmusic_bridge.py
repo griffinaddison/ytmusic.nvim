@@ -21,6 +21,18 @@ def cache_get(key):
 def cache_set(key, result):
     _cache[key] = (time.time(), result)
 
+def extract_artist(artists_list):
+    """Extract artist string and first artist's channelId."""
+    if not artists_list:
+        return "", ""
+    name = ", ".join(a.get("name", "") for a in artists_list if "name" in a)
+    artist_id = ""
+    for a in artists_list:
+        if a.get("id"):
+            artist_id = a["id"]
+            break
+    return name, artist_id
+
 def respond(req_id, data):
     msg = json.dumps({"id": req_id, "result": data})
     sys.stdout.write(msg + "\n")
@@ -72,11 +84,12 @@ def main():
                 tracks = []
                 for r in results:
                     if r.get("resultType") == "song":
-                        artists = ", ".join(a["name"] for a in r.get("artists", []) if "name" in a)
+                        artist, artist_id = extract_artist(r.get("artists", []))
                         tracks.append({
                             "videoId": r.get("videoId", ""),
                             "title": r.get("title", ""),
-                            "artist": artists,
+                            "artist": artist,
+                            "artistId": artist_id,
                             "album": (r.get("album") or {}).get("name", ""),
                             "duration": r.get("duration", ""),
                         })
@@ -120,11 +133,12 @@ def main():
                 liked = yt.get_liked_songs(limit=params.get("limit", 100))
                 tracks = []
                 for t in liked.get("tracks", []):
-                    artists = ", ".join(a["name"] for a in t.get("artists", []) if "name" in a)
+                    artist, artist_id = extract_artist(t.get("artists", []))
                     tracks.append({
                         "videoId": t.get("videoId", ""),
                         "title": t.get("title", ""),
-                        "artist": artists,
+                        "artist": artist,
+                        "artistId": artist_id,
                         "album": (t.get("album") or {}).get("name", ""),
                         "duration": t.get("duration", ""),
                         "setVideoId": t.get("setVideoId", ""),
@@ -136,16 +150,65 @@ def main():
                 playlist = yt.get_playlist(params["playlistId"], limit=params.get("limit", 200))
                 tracks = []
                 for t in playlist.get("tracks", []):
-                    artists = ", ".join(a["name"] for a in t.get("artists", []) if "name" in a)
+                    artist, artist_id = extract_artist(t.get("artists", []))
                     tracks.append({
                         "videoId": t.get("videoId", ""),
                         "title": t.get("title", ""),
-                        "artist": artists,
+                        "artist": artist,
+                        "artistId": artist_id,
                         "album": (t.get("album") or {}).get("name", ""),
                         "duration": t.get("duration", ""),
                         "setVideoId": t.get("setVideoId", ""),
                     })
                 result = {"title": playlist.get("title", ""), "tracks": tracks}
+                cache_set(cache_key, result)
+                respond(req_id, result)
+
+            elif method == "get_artist":
+                data = yt.get_artist(params["channelId"])
+                top_songs = []
+                for s in (data.get("songs", {}).get("results", [])):
+                    artist, artist_id = extract_artist(s.get("artists", []))
+                    top_songs.append({
+                        "videoId": s.get("videoId", ""),
+                        "title": s.get("title", ""),
+                        "artist": artist,
+                        "artistId": artist_id,
+                    })
+                albums = []
+                for a in (data.get("albums", {}).get("results", [])):
+                    albums.append({
+                        "title": a.get("title", ""),
+                        "year": a.get("year", ""),
+                        "browseId": a.get("browseId", ""),
+                        "playlistId": a.get("audioPlaylistId") or "",
+                    })
+                singles = []
+                for s in (data.get("singles", {}).get("results", [])):
+                    singles.append({
+                        "title": s.get("title", ""),
+                        "year": s.get("year", ""),
+                        "browseId": s.get("browseId", ""),
+                        "playlistId": s.get("audioPlaylistId") or "",
+                    })
+                related = []
+                for r in (data.get("related", {}).get("results", [])):
+                    related.append({
+                        "name": r.get("title", ""),
+                        "channelId": r.get("browseId", ""),
+                        "subscribers": r.get("subscribers", ""),
+                    })
+                result = {
+                    "name": data.get("name", ""),
+                    "subscribers": data.get("subscribers", ""),
+                    "description": data.get("description", ""),
+                    "topSongs": top_songs,
+                    "albums": albums,
+                    "singles": singles,
+                    "related": related,
+                    "shuffleId": data.get("shuffleId") or "",
+                    "radioId": data.get("radioId") or "",
+                }
                 cache_set(cache_key, result)
                 respond(req_id, result)
 
