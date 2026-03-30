@@ -9,6 +9,7 @@ local buf_tracks = {} -- tracks in current buffer, indexed by line
 local buf_type = nil -- "library", "playlist", "search", "queue"
 local buf_meta = {} -- extra info (playlistId, etc.)
 local queue = {} -- current play queue
+local cached_account_name = ""
 local yank_register = {} -- yanked tracks
 
 local ns = vim.api.nvim_create_namespace("ytmusic")
@@ -100,68 +101,130 @@ function M.open_library()
 
   buf_type = "library"
   buf_tracks = {}
-  buf_meta = {
-    items = {
-      [2] = { type = "queue" },
-    },
-  }
+  buf_meta = { items = {} }
   nav_stack = {}
 
-  local account_name = buf_meta.account_name or ""
-
-  local function make_header()
-    local left = "ytmusic.nvim"
-    if account_name ~= "" then
-      local width = vim.o.columns
-      local pad = width - #left - #account_name
-      if pad > 0 then
-        return left .. string.rep(" ", pad) .. account_name
-      end
+  local function build_library()
+    local new_lines = { "ytmusic.nvim" }
+    if cached_account_name ~= "" then
+      table.insert(new_lines, cached_account_name)
     end
-    return left
-  end
-
-  render(buf, { make_header(), "", "queue", "", "loading..." })
-  print("loading...")
-
-  bridge.request("get_account_name", {}, function(name)
-    if name and name ~= "" then
-      account_name = name
-      buf_meta.account_name = name
-      local buf2 = vim.api.nvim_get_current_buf()
-      if vim.bo[buf2].filetype == "ytmusic" then
-        vim.bo[buf2].modifiable = true
-        vim.api.nvim_buf_set_lines(buf2, 0, 1, false, { make_header() })
-        vim.bo[buf2].modifiable = false
-        vim.bo[buf2].modified = false
-      end
-    end
-  end)
-
-  bridge.request("get_library_playlists", {}, function(playlists)
-    local new_lines = {
-      make_header(),
-      "",
-      "queue",
-    }
+    table.insert(new_lines, "")
 
     buf_meta.items = {}
-    buf_meta.items[2] = { type = "queue" }
-
-    if playlists and #playlists > 0 then
-      for _, p in ipairs(playlists) do
-        table.insert(new_lines, p.title)
-        buf_meta.items[#new_lines - 1] = {
-          type = "playlist",
-          playlistId = p.playlistId,
-          title = p.title,
-        }
-      end
+    local sections = {
+      { name = "queue", type = "queue" },
+      { name = "liked songs", type = "liked_songs" },
+      { name = "playlists", type = "playlists" },
+      { name = "listen again", type = "listen_again" },
+      { name = "mixed for you", type = "mixed_for_you" },
+    }
+    for _, s in ipairs(sections) do
+      table.insert(new_lines, s.name)
+      buf_meta.items[#new_lines - 1] = { type = s.type }
     end
+    return new_lines
+  end
 
-    render(buf, new_lines)
-    print("")
-  end)
+  render(buf, build_library())
+
+  if cached_account_name == "" then
+    bridge.request("get_account_name", {}, function(name)
+      if name and name ~= "" then
+        cached_account_name = name
+        local buf2 = vim.api.nvim_get_current_buf()
+        if vim.bo[buf2].filetype == "ytmusic" then
+          render(buf2, build_library())
+        end
+      end
+    end)
+  end
+end
+
+-- Open a section listing (playlists, listen again, mixed for you)
+function M.open_section(section_type, title)
+  local buf = get_or_create_buf()
+  set_buf_options(buf)
+  set_keymaps(buf)
+
+  table.insert(nav_stack, { type = buf_type, meta = vim.deepcopy(buf_meta) })
+  buf_type = "section"
+  buf_tracks = {}
+  buf_meta = { section_type = section_type }
+
+  render(buf, { title, "", "loading..." })
+  print("loading...")
+
+  if section_type == "playlists" then
+    bridge.request("get_library_playlists", {}, function(playlists)
+      local new_lines = { title }
+      buf_meta.items = {}
+      if playlists then
+        for _, p in ipairs(playlists) do
+          table.insert(new_lines, p.title)
+          buf_meta.items[#new_lines - 1] = {
+            type = "playlist",
+            playlistId = p.playlistId,
+            title = p.title,
+          }
+        end
+      end
+      render(buf, new_lines)
+      print("")
+    end)
+  elseif section_type == "liked_songs" then
+    bridge.request("get_liked_songs", { limit = 100 }, function(tracks)
+      local new_lines = { title }
+      if not tracks then
+        table.insert(new_lines, "(failed to load — try refreshing cookies)")
+        render(buf, new_lines)
+        return
+      end
+      buf_tracks = {}
+      for _, track in ipairs(tracks) do
+        table.insert(new_lines, format_track(track))
+        buf_tracks[#new_lines - 1] = track
+      end
+      render(buf, new_lines)
+      print("")
+    end)
+  elseif section_type == "listen_again" or section_type == "mixed_for_you" then
+    local match_title = section_type == "listen_again" and "listen again" or "mixed for you"
+    bridge.request("get_home", {}, function(sections)
+      local new_lines = { title }
+      buf_meta.items = {}
+      if sections then
+        for _, s in ipairs(sections) do
+          if s.title:lower():match(match_title) then
+            for _, item in ipairs(s.items) do
+              local display = item.title
+              if item.artist and item.artist ~= "" then
+                display = display .. " - " .. item.artist
+              end
+              table.insert(new_lines, display)
+              local idx = #new_lines - 1
+              if item.type == "artist" and item.channelId and item.channelId ~= "" then
+                buf_meta.items[idx] = {
+                  type = "related_artist",
+                  channelId = item.channelId,
+                  name = item.title,
+                }
+              elseif item.playlistId and item.playlistId ~= "" and item.playlistId ~= vim.NIL then
+                buf_meta.items[idx] = {
+                  type = "playlist",
+                  playlistId = item.playlistId,
+                  title = item.title,
+                }
+              end
+            end
+            break
+          end
+        end
+      end
+      render(buf, new_lines)
+      print("")
+    end)
+  end
 end
 
 -- Render a playlist's tracks
@@ -292,11 +355,28 @@ function M.action_enter()
     if item then
       if item.type == "queue" then
         M.open_queue()
-      elseif item.type == "playlist" then
-        M.open_playlist(item.playlistId, item.title)
+      elseif item.type == "playlists" then
+        M.open_section("playlists", "playlists")
+      elseif item.type == "liked_songs" then
+        M.open_section("liked_songs", "liked songs")
+      elseif item.type == "listen_again" then
+        M.open_section("listen_again", "listen again")
+      elseif item.type == "mixed_for_you" then
+        M.open_section("mixed_for_you", "mixed for you")
       end
     end
     return
+  elseif buf_type == "section" then
+    local item = buf_meta.items and buf_meta.items[line]
+    if item then
+      if item.type == "playlist" then
+        M.open_playlist(item.playlistId, item.title)
+      elseif item.type == "related_artist" then
+        M.open_artist(item.channelId, item.name)
+      end
+      return
+    end
+    -- Fall through to play track
   elseif buf_type == "artist" then
     local item = buf_meta.items and buf_meta.items[line]
     if item then

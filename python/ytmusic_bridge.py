@@ -103,15 +103,24 @@ def main():
                     title = section.get("title", "")
                     items = []
                     for item in section.get("contents", []):
+                        browse_id = item.get("browseId") or ""
                         entry = {
                             "title": item.get("title") or "",
-                            "playlistId": item.get("playlistId") or "",
+                            "playlistId": item.get("playlistId") or item.get("audioPlaylistId") or "",
                             "videoId": item.get("videoId") or "",
                             "description": item.get("description") or "",
                         }
+                        # Detect item type from browseId
+                        if browse_id.startswith("UC"):
+                            entry["type"] = "artist"
+                            entry["channelId"] = browse_id
+                        elif browse_id.startswith("MPRE"):
+                            entry["type"] = "album"
                         artists = item.get("artists", [])
                         if artists:
-                            entry["artist"] = ", ".join(a.get("name", "") for a in artists if "name" in a)
+                            artist, artist_id = extract_artist(artists)
+                            entry["artist"] = artist
+                            entry["artistId"] = artist_id
                         items.append(entry)
                     sections.append({"title": title, "items": items})
                 cache_set(cache_key, sections)
