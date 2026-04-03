@@ -79,17 +79,20 @@ vim.opt.rtp:prepend(data .. "/lazy/lazy.nvim")
 require("lazy").setup({
   {
     dir = data .. "/lazy/ytmusic.nvim",
+    lazy = false,
     config = function()
       require("ytmusic").setup()
     end,
-    cmd = { "YTMusic", "YTSearch" },
-    keys = {
-      { "<leader>mm", "<cmd>YTMusic<cr>", desc = "Open YouTube Music" },
-      { "<leader>ms", ":YTSearch ", desc = "Search YouTube Music" },
-    },
   },
 }, {
   performance = { rtp = { reset = false } },
+})
+
+-- Auto-open library on launch
+vim.api.nvim_create_autocmd("VimEnter", {
+  callback = function()
+    vim.cmd("YTMusic")
+  end,
 })
 EOF
 
