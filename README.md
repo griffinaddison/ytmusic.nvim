@@ -2,7 +2,34 @@
 
 An [oil.nvim](https://github.com/stevearc/oil.nvim)-style YouTube Music player for Neovim. Browse your library, search, and play music — all in normal Neovim buffers with vim motions.
 
-## Dependencies
+## Install
+
+### Standalone (recommended for new users)
+
+One command. Installs a self-contained neovim config — does not touch your existing setup.
+
+```bash
+curl -sSL https://raw.githubusercontent.com/griffinaddison/ytmusic.nvim/main/install.sh | sh
+```
+
+This will:
+- Install dependencies (`mpv`, `yt-dlp`, `socat`) via your package manager
+- Set up a Python venv with `ytmusicapi`
+- Create an isolated neovim config at `~/.config/ytmusic-nvim/`
+- Install a `ytmusic` launcher to `~/.local/bin/`
+- Walk you through YouTube Music auth
+
+Then just run:
+
+```bash
+ytmusic
+```
+
+> Make sure `~/.local/bin` is in your `PATH`. The standalone config is completely isolated via `NVIM_APPNAME` — your existing `~/.config/nvim/` is untouched.
+
+### Add to existing Neovim config
+
+#### Dependencies
 
 - [mpv](https://mpv.io/) + [yt-dlp](https://github.com/yt-dlp/yt-dlp) (audio playback)
 - [socat](http://www.dest-unreach.org/socat/) (mpv IPC)
@@ -14,13 +41,13 @@ python3 -m venv ~/.local/share/ytmusic-nvim-venv
 ~/.local/share/ytmusic-nvim-venv/bin/pip install ytmusicapi
 ```
 
-## Install
+#### Plugin
 
 With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
-  "your-username/ytmusic.nvim",
+  "griffinaddison/ytmusic.nvim",
   config = function()
     require("ytmusic").setup()
   end,
@@ -32,7 +59,7 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 }
 ```
 
-## Auth Setup
+#### Auth Setup
 
 1. Open `music.youtube.com` in Chrome (make sure you're logged in)
 2. Open DevTools (`Cmd+Option+I`) > **Network** tab
