@@ -48,11 +48,11 @@ local function ensure_mpv()
   end
 
   -- Start mpv in idle mode
-  local cmd = string.format(
-    "mpv --idle --no-video --input-ipc-server=%s --quiet &",
-    socket_path
-  )
-  vim.fn.system(cmd)
+  vim.fn.jobstart({
+    "mpv", "--idle", "--no-video",
+    "--input-ipc-server=" .. socket_path,
+    "--quiet",
+  }, { detach = true })
 
   -- Wait briefly for socket
   vim.wait(500, function()
