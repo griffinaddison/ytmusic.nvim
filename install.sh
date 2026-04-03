@@ -89,6 +89,9 @@ require("lazy").setup({
   performance = { rtp = { reset = false } },
 })
 
+-- Statusline: show now-playing
+vim.o.statusline = "%{%v:lua.require('ytmusic.statusline').now_playing()%}%=%f"
+
 -- Auto-open library on launch
 vim.api.nvim_create_autocmd("VimEnter", {
   callback = function()
