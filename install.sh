@@ -94,13 +94,13 @@ require("lazy").setup({
 EOF
 
 # --- Create launcher script ---
-info "Creating 'ytmusic' launcher in $BIN_DIR..."
+info "Creating 'ytm' launcher in $BIN_DIR..."
 mkdir -p "$BIN_DIR"
-cat > "$BIN_DIR/ytmusic" << 'EOF'
+cat > "$BIN_DIR/ytm" << 'EOF'
 #!/usr/bin/env bash
 NVIM_APPNAME=ytmusic-nvim exec nvim "$@"
 EOF
-chmod +x "$BIN_DIR/ytmusic"
+chmod +x "$BIN_DIR/ytm"
 
 # --- Auth setup ---
 AUTH_DIR="$HOME/.config/ytmusic.nvim"
@@ -113,5 +113,5 @@ else
 fi
 
 echo
-info "Done! Run 'ytmusic' to start."
+info "Done! Run 'ytm' to start."
 info "Make sure $BIN_DIR is in your PATH."

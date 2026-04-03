@@ -16,13 +16,13 @@ This will:
 - Install dependencies (`mpv`, `yt-dlp`, `socat`) via your package manager
 - Set up a Python venv with `ytmusicapi`
 - Create an isolated neovim config at `~/.config/ytmusic-nvim/`
-- Install a `ytmusic` launcher to `~/.local/bin/`
+- Install a `ytm` launcher to `~/.local/bin/`
 - Walk you through YouTube Music auth
 
 Then just run:
 
 ```bash
-ytmusic
+ytm
 ```
 
 > Make sure `~/.local/bin` is in your `PATH`. The standalone config is completely isolated via `NVIM_APPNAME` — your existing `~/.config/nvim/` is untouched.
