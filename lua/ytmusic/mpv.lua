@@ -51,8 +51,19 @@ local function ensure_mpv()
   vim.fn.jobstart({
     "mpv", "--idle", "--no-video",
     "--input-ipc-server=" .. socket_path,
-    "--quiet",
-  }, { detach = true })
+    "--msg-level=all=warn",
+  }, {
+    detach = true,
+    on_stderr = function(_, data)
+      for _, line in ipairs(data) do
+        if line ~= "" then
+          vim.schedule(function()
+            vim.notify("ytmusic.nvim [mpv]: " .. line, vim.log.levels.WARN)
+          end)
+        end
+      end
+    end,
+  })
 
   -- Wait briefly for socket
   vim.wait(500, function()
@@ -72,6 +83,17 @@ function M.play(video_id, track_info)
   send_command("loadfile", url, "replace")
   send_command("set_property", "pause", false)
   M.start_polling()
+
+  -- Check if stream actually loaded after a delay
+  vim.defer_fn(function()
+    send_command_async({ "get_property", "time-pos" }, function(result)
+      if result and result.error and result.error ~= "success" then
+        vim.schedule(function()
+          vim.notify("ytmusic.nvim: Stream failed to load — yt-dlp may be broken (try: yt-dlp --no-download '" .. url .. "')", vim.log.levels.ERROR)
+        end)
+      end
+    end)
+  end, 5000)
 end
 
 function M.queue_track(video_id)
