@@ -73,6 +73,7 @@ info "Writing config to $CONFIG_DIR..."
 mkdir -p "$CONFIG_DIR"
 cat > "$CONFIG_DIR/init.lua" << 'EOF'
 -- ytmusic.nvim standalone config
+vim.g.mapleader = " "
 local data = vim.fn.stdpath("data")
 vim.opt.rtp:prepend(data .. "/lazy/lazy.nvim")
 
